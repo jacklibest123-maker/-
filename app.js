@@ -1,4 +1,10 @@
+      
 const { useState, useEffect, useCallback } = React;
+
+// CORS 代理配置（解决公司网络拦截 open.feishu.cn 的问题）
+// 如果不需要代理，改为 false 即可
+const USE_CORS_PROXY = true;
+const CORS_PROXY_BASE = 'https://corsproxy.io/?';
 
 // 飞书凭证配置
 const FEISHU_CREDENTIALS = {
@@ -106,7 +112,10 @@ const feishuApi = {
       return this._tokenCache;
     }
     try {
-      const response = await fetch('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal', {
+      const tokenUrl = USE_CORS_PROXY
+        ? CORS_PROXY_BASE + encodeURIComponent('https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal')
+        : 'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal';
+      const response = await fetch(tokenUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -132,8 +141,8 @@ const feishuApi = {
   async queryRecords(config, filterField, filterValue) {
     try {
       const token = await this.getAccessToken();
-      const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records`;
-      
+      const baseUrl = `https://open.feishu.cn/open-apis/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records`;
+      const url = USE_CORS_PROXY ? CORS_PROXY_BASE + encodeURIComponent(baseUrl) : baseUrl;
       const response = await fetch(url, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -168,8 +177,8 @@ const feishuApi = {
   async addRecord(config, fieldsData) {
     try {
       const token = await this.getAccessToken();
-      const url = `https://open.feishu.cn/open-apis/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records`;
-      
+      const baseUrl = `https://open.feishu.cn/open-apis/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records`;
+      const url = USE_CORS_PROXY ? CORS_PROXY_BASE + encodeURIComponent(baseUrl) : baseUrl;
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -471,34 +480,17 @@ function InquiryTab({ showToast }) {
       return;
     }
     
-    setLoading(true);
-    try {
-      const fieldsData = {
-        [FEISHU_CONFIG.inquiry.fields.primaryName]: form.name,
-        [FEISHU_CONFIG.inquiry.fields.dept]: form.dept,
-        [FEISHU_CONFIG.inquiry.fields.product]: form.product,
-        [FEISHU_CONFIG.inquiry.fields.qty]: Number(form.qty),
-        [FEISHU_CONFIG.inquiry.fields.status]: STATUS_OPTIONS.inquiry,
-        [FEISHU_CONFIG.inquiry.fields.amount]: null  // 采购填写，初始为空
-      };
-      
-      const result = await feishuApi.addRecord(FEISHU_CONFIG.inquiry, fieldsData);
-      
-      const text = `【询价前期-已提交】
+    // 无需API写入，生成数据文本由机器人代写
+    const text = `【询价前期-待处理】
 需求人：${form.name}
 部门：${form.dept}
 产品明细：${form.product}
 产品数量：${form.qty}
-状态：待报价
-记录ID：${result.record ? result.record.record_id : '未知'}`;
-      
-      setDataText(text);
-      setSubmitted(true);
-      showToast('✅ 已成功写入飞书表格', 'success');
-    } catch (err) {
-      showToast('写入失败: ' + err.message, 'error');
-    }
-    setLoading(false);
+请帮我写入「采购询价库-前期」，状态设为「待报价」`;
+
+    setDataText(text);
+    setSubmitted(true);
+    showToast('✅ 数据已准备好，请复制发给机器人写入', 'success');
   };
   
   const handleReset = () => {
@@ -572,53 +564,24 @@ function BudgetTab({ showToast }) {
       return;
     }
     
-    // 校验关联的询价前期单号
-    setLoading(true);
-    try {
-      const result = await feishuApi.queryStatus('inquiry', form.inquiryNo);
-      
-      if (!result.exists) {
-        setValidationError('❌ 关联的询价前期单号不存在，请先在「询价前期」提交');
-        setLoading(false);
-        return;
-      }
-      
-      if (result.status !== '已完成' && result.status !== '已报价') {
-        setValidationError('❌ 关联的询价前期单尚未完成询价，请先完成询价流程');
-        setLoading(false);
-        return;
-      }
-      
-      // 直接写入预算申请表格
-      const fieldsData = {
-        [FEISHU_CONFIG.budget.fields.inquiryNo]: form.inquiryNo,
-        [FEISHU_CONFIG.budget.fields.primaryName]: form.name,
-        [FEISHU_CONFIG.budget.fields.dept]: form.dept,
-        [FEISHU_CONFIG.budget.fields.product]: form.product,
-        [FEISHU_CONFIG.budget.fields.qty]: Number(form.qty),
-        [FEISHU_CONFIG.budget.fields.amount]: Number(form.amount),
-        [FEISHU_CONFIG.budget.fields.status]: STATUS_OPTIONS.budget_draft
-      };
-      
-      const writeResult = await feishuApi.addRecord(FEISHU_CONFIG.budget, fieldsData);
-      
-      const text = `【预算申请-已提交】
+    // 前端格式校验，不调API
+    if (!/^[A-Za-z0-9\-]+$/.test(form.inquiryNo)) {
+      setValidationError('❌ 关联询价前期单号格式不正确');
+      return;
+    }
+
+    const text = `【预算申请-待提交】
 需求人：${form.name}
 部门：${form.dept}
 产品信息：${form.product}
 数量：${form.qty}
 预计金额：${Number(form.amount).toLocaleString()}元
 关联询价前期单号：${form.inquiryNo}
-状态：待提交
-记录ID：${writeResult.record ? writeResult.record.record_id : '未知'}`;
-      
-      setDataText(text);
-      setSubmitted(true);
-      showToast('✅ 已成功写入飞书表格', 'success');
-    } catch (err) {
-      showToast('操作失败: ' + err.message, 'error');
-    }
-    setLoading(false);
+请帮我写入「采购预算申请库」，状态设为「待提交」`;
+
+    setDataText(text);
+    setSubmitted(true);
+    showToast('✅ 数据已准备好，请复制发给机器人写入', 'success');
   };
   
   const handleReset = () => {
@@ -707,53 +670,24 @@ function PurchaseTab({ showToast }) {
       return;
     }
     
-    // 校验关联预算单号
-    setLoading(true);
-    try {
-      const result = await feishuApi.queryStatus('budget', form.budgetNo);
-      
-      if (!result.exists) {
-        setValidationError('❌ 该预算单号不存在，请先提交预算申请');
-        setLoading(false);
-        return;
-      }
-      
-      if (result.status !== '已通过') {
-        setValidationError('❌ 该预算单尚未审批通过，请先完成预算审批流程');
-        setLoading(false);
-        return;
-      }
-      
-      // 直接写入采购申请表格
-      const fieldsData = {
-        [FEISHU_CONFIG.purchase.fields.primaryName]: form.budgetNo,
-        [FEISHU_CONFIG.purchase.fields.name]: form.name,
-        [FEISHU_CONFIG.purchase.fields.dept]: form.dept,
-        [FEISHU_CONFIG.purchase.fields.product]: form.product,
-        [FEISHU_CONFIG.purchase.fields.qty]: Number(form.qty),
-        [FEISHU_CONFIG.purchase.fields.remark]: form.remark || '',
-        [FEISHU_CONFIG.purchase.fields.status]: STATUS_OPTIONS.purchase
-      };
-      
-      const writeResult = await feishuApi.addRecord(FEISHU_CONFIG.purchase, fieldsData);
-      
-      const text = `【采购申请-已提交】
+    // 前端格式校验，不调API
+    if (!/^[A-Za-z0-9\-]+$/.test(form.budgetNo)) {
+      setValidationError('❌ 关联预算单号格式不正确');
+      return;
+    }
+
+    const text = `【采购申请-待处理】
 关联预算单号：${form.budgetNo}
 需求人：${form.name}
 部门：${form.dept}
 产品明细：${form.product}
 数量：${form.qty}
 备注：${form.remark || '无'}
-状态：待处理
-记录ID：${writeResult.record ? writeResult.record.record_id : '未知'}`;
-      
-      setDataText(text);
-      setSubmitted(true);
-      showToast('✅ 已成功写入飞书表格', 'success');
-    } catch (err) {
-      showToast('操作失败: ' + err.message, 'error');
-    }
-    setLoading(false);
+请帮我写入「采购申请库」，状态设为「待处理」`;
+
+    setDataText(text);
+    setSubmitted(true);
+    showToast('✅ 数据已准备好，请复制发给机器人写入', 'success');
   };
   
   const handleReset = () => {
@@ -850,46 +784,24 @@ function ComparisonTab({ showToast }) {
       return;
     }
     
-    // 校验关联采购申请单号
-    setLoading(true);
-    try {
-      const result = await feishuApi.queryStatus('purchase', form.purchaseNo);
-      
-      if (!result.exists) {
-        setValidationError('❌ 关联的采购申请单号不存在，请先提交采购申请');
-        setLoading(false);
-        return;
-      }
-      
-      // 直接写入比价结果表格
-      const fieldsData = {
-        [FEISHU_CONFIG.comparison.fields.primaryName]: form.purchaseNo,
-        [FEISHU_CONFIG.comparison.fields.supplierA]: form.supplierA ? `${form.supplierA}: ${Number(form.priceA).toLocaleString()}元` : null,
-        [FEISHU_CONFIG.comparison.fields.supplierB]: form.supplierB && form.priceB ? `${form.supplierB}: ${Number(form.priceB).toLocaleString()}元` : null,
-        [FEISHU_CONFIG.comparison.fields.supplierC]: form.supplierC && form.priceC ? `${form.supplierC}: ${Number(form.priceC).toLocaleString()}元` : null,
-        [FEISHU_CONFIG.comparison.fields.recommend]: form.recommend,
-        [FEISHU_CONFIG.comparison.fields.opinion]: form.opinion || '',
-        [FEISHU_CONFIG.comparison.fields.status]: STATUS_OPTIONS.comparison
-      };
-      
-      const writeResult = await feishuApi.addRecord(FEISHU_CONFIG.comparison, fieldsData);
-      
-      const text = `【比价汇报-已提交】
+    // 前端格式校验，不调API
+    if (!/^[A-Za-z0-9\-]+$/.test(form.purchaseNo)) {
+      setValidationError('❌ 关联采购申请单号格式不正确');
+      return;
+    }
+
+    const text = `【比价汇报-待审批】
 关联采购申请单号：${form.purchaseNo}
 供应商A报价：${form.supplierA} ${Number(form.priceA).toLocaleString()}元
-${form.supplierB ? `供应商B报价：${form.supplierB} ${Number(form.priceB).toLocaleString()}元` : ''}
-${form.supplierC ? `供应商C报价：${form.supplierC} ${Number(form.priceC).toLocaleString()}元` : ''}
+${form.supplierB && form.priceB ? `供应商B报价：${form.supplierB} ${Number(form.priceB).toLocaleString()}元` : ''}
+${form.supplierC && form.priceC ? `供应商C报价：${form.supplierC} ${Number(form.priceC).toLocaleString()}元` : ''}
 推荐供应商：${form.recommend}
 选择意见：${form.opinion || '无'}
-状态：待审批
-记录ID：${writeResult.record ? writeResult.record.record_id : '未知'}`;
-      
-      setDataText(text);
-      setSubmitted(true);
-      showToast('✅ 已成功写入飞书表格', 'success');
-    } catch (err) {
-      showToast('操作失败: ' + err.message, 'error');
-    }
+请帮我写入「采购比价结果库」，状态设为「待审批」`;
+
+    setDataText(text);
+    setSubmitted(true);
+    showToast('✅ 数据已准备好，请复制发给机器人写入', 'success');
     setLoading(false);
   };
   
@@ -1013,51 +925,23 @@ function ContractTab({ showToast }) {
       return;
     }
     
-    // 校验关联比价单号
-    setLoading(true);
-    try {
-      const result = await feishuApi.queryStatus('comparison', form.comparisonNo);
-      
-      if (!result.exists) {
-        setValidationError('❌ 关联的比价单号不存在，请先提交比价汇报');
-        setLoading(false);
-        return;
-      }
-      
-      if (result.status !== '已通过') {
-        setValidationError('❌ 关联的比价汇报尚未审批通过');
-        setLoading(false);
-        return;
-      }
-      
-      // 直接写入合同表格
-      const fieldsData = {
-        [FEISHU_CONFIG.contract.fields.primaryName]: form.comparisonNo,
-        [FEISHU_CONFIG.contract.fields.amount]: Number(form.amount),
-        [FEISHU_CONFIG.contract.fields.supplier]: form.supplier,
-        [FEISHU_CONFIG.contract.fields.payment]: form.payment,
-        [FEISHU_CONFIG.contract.fields.delivery]: form.delivery,
-        [FEISHU_CONFIG.contract.fields.status]: STATUS_OPTIONS.contract
-      };
-      
-      const writeResult = await feishuApi.addRecord(FEISHU_CONFIG.contract, fieldsData);
-      
-      const text = `【合同审批-已提交】
+    // 前端格式校验，不调API
+    if (!/^[A-Za-z0-9\-]+$/.test(form.comparisonNo)) {
+      setValidationError('❌ 关联比价单号格式不正确');
+      return;
+    }
+
+    const text = `【合同审批-待审批】
 关联比价单号：${form.comparisonNo}
 合同金额：${Number(form.amount).toLocaleString()}元
 供应商名称：${form.supplier}
 付款方式：${form.payment}
 交付时间：${form.delivery}
-状态：待审批
-记录ID：${writeResult.record ? writeResult.record.record_id : '未知'}`;
-      
-      setDataText(text);
-      setSubmitted(true);
-      showToast('✅ 已成功写入飞书表格', 'success');
-    } catch (err) {
-      showToast('操作失败: ' + err.message, 'error');
-    }
-    setLoading(false);
+请帮我写入「采购合同库」，状态设为「待审批」`;
+
+    setDataText(text);
+    setSubmitted(true);
+    showToast('✅ 数据已准备好，请复制发给机器人写入', 'success');
   };
   
   const handleReset = () => {
@@ -1223,3 +1107,5 @@ function App() {
 
 // 渲染应用
 ReactDOM.createRoot(document.getElementById('app')).render(<App />);
+
+    
